@@ -7,17 +7,10 @@
  */
 export function toVietnamISOString(datetimeLocalValue) {
   if (!datetimeLocalValue) return null;
-  
-  // Create date from local input (browser interprets as local time)
-  const localDate = new Date(datetimeLocalValue);
-  
-  // Get Vietnam timezone offset (+7 hours = 420 minutes)
-  const vietnamOffset = 7 * 60; // 420 minutes
-  
-  // Convert to Vietnam time by adding the offset
-  const vietnamTime = new Date(localDate.getTime() + (vietnamOffset * 60 * 1000));
-  
-  return vietnamTime.toISOString();
+  // datetime-local value is interpreted as LOCAL time by the browser.
+  // To persist consistently, store it as a UTC ISO string without any manual offset math.
+  // This avoids double-applying offsets and keeps round-trips stable.
+  return new Date(datetimeLocalValue).toISOString();
 }
 
 /**
@@ -27,17 +20,15 @@ export function toVietnamISOString(datetimeLocalValue) {
  */
 export function fromVietnamISOString(vietnamISOString) {
   if (!vietnamISOString) return '';
-  
-  // Create date from ISO string
-  const date = new Date(vietnamISOString);
-  
-  // Get Vietnam timezone offset (+7 hours = 420 minutes)
-  const vietnamOffset = 7 * 60; // 420 minutes
-  
-  // Convert from Vietnam time to local time by subtracting the offset
-  const localTime = new Date(date.getTime() - (vietnamOffset * 60 * 1000));
-  
-  return localTime.toISOString().slice(0, 16);
+  // The datetime-local input expects a local time string in the form YYYY-MM-DDTHH:mm
+  // Build that using local time components (NOT toISOString which is UTC).
+  const d = new Date(vietnamISOString);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 /**
@@ -48,27 +39,47 @@ export function fromVietnamISOString(vietnamISOString) {
  */
 export function formatVietnamTime(date, format = 'YYYY-MM-DD HH:mm:ss') {
   if (!date) return '';
-  
-  const dateObj = new Date(date);
-  
-  // Get Vietnam timezone offset (+7 hours = 420 minutes)
-  const vietnamOffset = 7 * 60;
-  const vietnamTime = new Date(dateObj.getTime() + (vietnamOffset * 60 * 1000));
-  
-  // Format based on requested format
+  const d = new Date(date);
+  // Use Intl with Asia/Ho_Chi_Minh to avoid manual offset math
+  const tz = 'Asia/Ho_Chi_Minh';
+
+  const two = (n) => String(n).padStart(2, '0');
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(d).reduce((acc, p) => {
+    acc[p.type] = p.value;
+    return acc;
+  }, {});
+
+  const yyyy = parts.year;
+  const mm = parts.month;
+  const dd = parts.day;
+  const HH = two(parts.hour);
+  const MM = two(parts.minute);
+  const SS = two(parts.second);
+
   switch (format) {
     case 'YYYY-MM-DD HH:mm:ss':
-      return vietnamTime.toISOString().slice(0, 19).replace('T', ' ');
+      return `${yyyy}-${mm}-${dd} ${HH}:${MM}:${SS}`;
     case 'YYYY-MM-DD':
-      return vietnamTime.toISOString().slice(0, 10);
+      return `${yyyy}-${mm}-${dd}`;
     case 'HH:mm:ss':
-      return vietnamTime.toISOString().slice(11, 19);
-    case 'MM/DD/YYYY':
-      return vietnamTime.toLocaleDateString('en-US');
-    case 'DD/MM/YYYY':
-      return vietnamTime.toLocaleDateString('en-GB');
+      return `${HH}:${MM}:${SS}`;
+    case 'MM/DD/YYYY': {
+      return new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    }
+    case 'DD/MM/YYYY': {
+      return new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    }
     default:
-      return vietnamTime.toISOString().slice(0, 19).replace('T', ' ');
+      return `${yyyy}-${mm}-${dd} ${HH}:${MM}:${SS}`;
   }
 }
 
