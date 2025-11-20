@@ -53,4 +53,21 @@ export const postsService = {
     const response = await api.post('/embed', { text });
     return response.data;
   }
+,
+  // Delete a post by ID
+  deletePost: async (postId) => {
+    const response = await api.delete(`/posts/${postId}`);
+    return response.data;
+  }
+,
+  // Get low engagement posts by threshold
+  getLowEngagement: async (threshold = 5) => {
+    const response = await api.get(`/engagement/low?threshold=${threshold}`);
+    return response.data;
+  }
+,
+  getEngagementForPost: async (postId) => {
+    const response = await api.get(`/engagement/post/${postId}`);
+    return response.data;
+  }
 };

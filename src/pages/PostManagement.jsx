@@ -21,6 +21,11 @@ export default function PostManagement() {
   const { addNotification } = useApp();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingPost, setEditingPost] = useState(null);
+    const [mediaList, setMediaList] = useState([]);
+  const [mediaPreview, setMediaPreview] = useState(null);
+  const [lowEngagedPostIds, setLowEngagedPostIds] = useState(new Set());
+  const [editingEngagements, setEditingEngagements] = useState([]);
+
   const [newPost, setNewPost] = useState({
     title: '',
     content: '',
@@ -39,31 +44,117 @@ export default function PostManagement() {
 
   // Fetch unpublished posts
   const { data: unpublishedPosts, execute: fetchUnpublishedPosts } = useApi(postsService.getUnpublishedPosts);
+  useEffect(() => {
+    // fetch posts and media list on mount
+      fetchPosts();
+      // fetch low-engagement posts
+      postsService.getLowEngagement(5).then(res => {
+        try {
+          const rows = res.data || [];
+          const ids = new Set(rows.map(e => {
+            // engagement row may include platformPost -> post -> id, or platformPost.post_id, or top-level post_id
+            return (e.platformPost && e.platformPost.post && e.platformPost.post.id)
+              || (e.platformPost && e.platformPost.post_id)
+              || e.post_id
+              || e.postId
+              || null;
+          }).filter(Boolean));
+          setLowEngagedPostIds(ids);
+        } catch (err) {
+          console.warn('Failed to parse low engagement response', err);
+        }
+      }).catch(() => setLowEngagedPostIds(new Set()));
+      if (typeof postsService.getMediaList === 'function') {
+        postsService.getMediaList()
+          .then((res) => setMediaList(res || []))
+          .catch(() => setMediaList([]));
+      }
+      // optionally fetch other lists if needed
+    }, []);
 
+  // When editingPost is set, fetch engagement rows for that post
+  useEffect(() => {
+    let cancelled = false;
+    if (editingPost && editingPost.id) {
+      postsService.getEngagementForPost(editingPost.id)
+        .then(res => {
+          if (cancelled) return;
+          setEditingEngagements(res.data || []);
+        })
+        .catch(err => {
+          console.warn('Failed to load engagement for post', err);
+          setEditingEngagements([]);
+        });
+    } else {
+      setEditingEngagements([]);
+    }
+    return () => { cancelled = true; };
+  }, [editingPost]);
+  useEffect(() => {
+      let objectUrl;
+      if (newPost?.media instanceof File) {
+        objectUrl = URL.createObjectURL(newPost.media);
+        setMediaPreview(objectUrl);
+      } else {
+        setMediaPreview(newPost?.media?.url || null);
+      }
+      return () => {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      };
+    }, [newPost.media]);
   const handleCreatePost = async (e) => {
     e.preventDefault();
+    console.log('handleCreatePost called', { media: newPost.media, scheduledAt: newPost.scheduledAt });
     try {
-      const result = await postsService.schedulePost(newPost);
-      addNotification({
-        type: 'success',
-        message: 'Post created successfully!'
-      });
+      // If media is a File, upload it to Cloudinary first and get the URL
+      let mediaUrl = null;
+      if (newPost.media instanceof File) {
+        const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+        const preset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+        console.log('cloudName,preset', cloudName, preset);
+        if (!cloudName || !preset) {
+          throw new Error('Cloudinary not configured. Set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET');
+        }
+
+        const fd = new FormData();
+        fd.append('file', newPost.media);
+        fd.append('upload_preset', preset);
+        fd.append("folder", "posted_images");
+
+        const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+          method: 'POST',
+          body: fd
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Cloudinary upload failed: ${res.status} ${text}`);
+        }
+
+        const json = await res.json();
+        mediaUrl = json.secure_url || json.url || null;
+      } else if (newPost.media && newPost.media.url) {
+        mediaUrl = newPost.media.url;
+      }
+      // Build payload to send to backend. Backend should accept mediaUrl (string) or null.
+      const payload = {
+        title: newPost.title,
+        content: newPost.content,
+        topic: newPost.topic,
+        useAI: newPost.useAI,
+        platform: newPost.platform,
+        scheduledAt: newPost.scheduledAt || null,
+        mediaUrl
+      };
+
+      const result = await postsService.schedulePost(payload);
+      addNotification({ type: 'success', message: 'Post created successfully!' });
       setShowCreateModal(false);
-      setNewPost({
-        title: '',
-        content: '',
-        topic: '',
-        useAI: false,
-        media: null,
-        platform: ['facebook'],
-        scheduledAt: null
-      });
+      setNewPost({ title: '', content: '', topic: '', useAI: false, media: null, platform: ['facebook'], scheduledAt: null });
       fetchPosts();
     } catch (error) {
-      addNotification({
-        type: 'error',
-        message: 'Failed to create post'
-      });
+      console.error('Create post error', error);
+      addNotification({ type: 'error', message: `Failed to create post: ${error.message || error}` });
     }
   };
 
@@ -227,6 +318,11 @@ export default function PostManagement() {
                       <span className={getStatusBadge(post.status)}>
                         {post.status}
                       </span>
+                      {lowEngagedPostIds.has(post.id) && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                          Low engagement
+                        </span>
+                      )}
                     </div>
                     
                     <p className="text-sm text-gray-600 mb-2 line-clamp-2">
@@ -330,7 +426,56 @@ export default function PostManagement() {
                   <span>Generate with AI</span>
                 </button>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Image (Optional)
+                </label>
 
+                <div className="flex items-center space-x-4">
+                  {mediaList?.length > 0 && (
+                    <select
+                      className="input max-w-xs"
+                      value={newPost.media && newPost.media.id ? String(newPost.media.id) : ''}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        if (!id) {
+                          setNewPost(prev => ({ ...prev, media: null }));
+                          return;
+                        }
+                        const selected = mediaList.find(m => String(m.id) === String(id));
+                        if (selected) {
+                          setNewPost(prev => ({ ...prev, media: { id: selected.id, url: selected.url || selected.path } }));
+                        }
+                      }}
+                    >
+                      <option value="">-- Chọn ảnh sẵn có --</option>
+                      {mediaList.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.filename || m.name || m.id}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="w-full"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        setNewPost(prev => ({ ...prev, media: file }));
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {mediaPreview && (
+                  <div className="mt-2">
+                    <img src={mediaPreview} alt="preview" className="h-24 object-contain rounded border" />
+                  </div>
+                )}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Platform *
@@ -395,6 +540,7 @@ export default function PostManagement() {
                   }))}
                 />
               </div>
+              
 
               <div className="flex items-center space-x-2">
                 <input
@@ -425,6 +571,81 @@ export default function PostManagement() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit / View Post Modal */}
+      {editingPost && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Post Details</h2>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setEditingPost(null)}
+                  className="btn-secondary px-3 py-1"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-medium">Title: {editingPost.title}</h3>
+                <p className="text-sm text-gray-600">Topic: {editingPost.topic}</p>
+                <p className="mt-2 text-gray-800 whitespace-pre-wrap">Content: {editingPost.content}</p>
+              </div>
+
+              {editingPost.media && (
+                <div>
+                  <p className="text-sm text-gray-600 mb-2">Media</p>
+                  <img src={editingPost.media} alt="post media" className="max-h-64 object-contain rounded border" />
+                </div>
+              )}
+
+              {editingEngagements?.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mt-4">Engagement details</h4>
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {editingEngagements.map((e) => (
+                      <div key={e.id} className="p-3 border rounded bg-gray-50">
+                        <div className="text-xs text-gray-500">Platform: {e.platform}</div>
+                        <div className="text-sm font-medium">Score: {e.engagement_score}</div>
+                        <div className="text-xs text-gray-600">Likes: {e.likes} • Comments: {e.comments} • Shares: {e.shares}</div>
+                        <div className="text-xs text-gray-600">Views: {e.views} • Clicks: {e.clicks}</div>
+                        <div className="text-xs text-gray-400">Last checked: {e.last_checked_at ? new Date(e.last_checked_at).toLocaleString() : '—'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-500">Created: {formatVietnamTime(editingPost.created_at, 'YYYY-MM-DD HH:mm:ss')}</div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Are you sure you want to delete this post? This cannot be undone.')) return;
+                      try {
+                        await postsService.deletePost(editingPost.id);
+                        addNotification({ type: 'success', message: 'Post deleted' });
+                        setEditingPost(null);
+                        fetchPosts();
+                      } catch (err) {
+                        console.error('Failed to delete post', err);
+                        addNotification({ type: 'error', message: 'Failed to delete post' });
+                      }
+                    }}
+                    className="btn-danger px-3 py-1 flex items-center space-x-2"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                    <span>Delete</span>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

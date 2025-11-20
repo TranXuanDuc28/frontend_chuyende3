@@ -1,5 +1,5 @@
 // Test script to verify timezone conversion fix
-const { toVietnamISOString, fromVietnamISOString } = require('./frontend/src/utils/timezone.js');
+const { toVietnamISOString, fromVietnamISOString } = require('./src/utils/timezone.js');
 
 console.log('🧪 Testing timezone conversion fix...\n');
 
