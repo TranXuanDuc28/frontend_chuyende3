@@ -12,7 +12,9 @@ import {
   CogIcon,
   PlayIcon,
   UsersIcon,
-  SparklesIcon
+  SparklesIcon,
+  ChatBubbleOvalLeftIcon
+
 } from '@heroicons/react/24/outline';
 
 export default function ChatAI() {
@@ -40,6 +42,7 @@ export default function ChatAI() {
     if (activeTab === 'users') fetchUsers();
     if (activeTab === 'responses') fetchResponses();
     if (activeTab === 'analytics') fetchAnalytics();
+    if (activeTab === 'conversations' && selectedUser) fetchConversations();
   }, [activeTab]);
 
   useEffect(() => {
@@ -112,7 +115,7 @@ export default function ChatAI() {
           </Card>
           <Card>
             <div className="flex items-center">
-              //<MessageSquareIcon className="h-8 w-8 text-green-600" />
+              <ChatBubbleOvalLeftIcon className="h-8 w-8 text-green-600" />
               <div className="ml-4">
                 <div className="text-sm text-gray-500">Conversations</div>
                 <div className="text-2xl font-bold">{stats.stats?.conversations || 0}</div>
@@ -157,7 +160,7 @@ export default function ChatAI() {
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
-              <tab.icon className="h-5 w-5 mr-2" />
+              {tab.icon ? <tab.icon className="h-5 w-5 mr-2" /> : null}
               {tab.name}
             </button>
           ))}
